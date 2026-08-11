@@ -1,0 +1,114 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1f2937;
+}
+
+body { display: flex; }
+
+#sidebar {
+  width: 340px;
+  min-width: 300px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  border-right: 1px solid #e5e7eb;
+  background: #fbfaf7;
+}
+
+#map { flex: 1; height: 100%; }
+
+h1 { font-size: 24px; margin: 0; }
+.tagline { margin: 2px 0 18px; color: #6b7280; font-size: 14px; }
+
+.controls label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 12px 0 4px;
+}
+
+.controls input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 15px;
+  background: #fff;
+}
+
+button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  background: #2b8a3e;
+  color: #fff;
+}
+
+button:disabled { background: #9ca3af; cursor: default; }
+
+button.secondary {
+  background: #fff;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+}
+
+.hint { font-size: 12px; color: #9ca3af; margin: 6px 0 0; text-align: center; }
+
+#status { margin-top: 14px; font-size: 14px; color: #374151; min-height: 1em; }
+#status.error { color: #b91c1c; }
+#sunNote { margin-top: 8px; font-size: 13px; color: #92400e; }
+
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 10px 0;
+  cursor: pointer;
+  background: #fff;
+}
+
+.card:hover { border-color: #9ca3af; }
+.card.selected { border-color: #2b8a3e; background: #f3faf4; }
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.route-name { font-weight: 500; }
+.shade-pct { color: #2b8a3e; font-weight: 500; font-size: 14px; }
+
+.shadebar {
+  height: 6px;
+  border-radius: 3px;
+  background: #f4e8d0;
+  overflow: hidden;
+}
+
+.shadebar > div { height: 100%; background: #2b8a3e; }
+
+.card-meta { margin-top: 6px; font-size: 13px; color: #6b7280; }
+.card-meta .warn { color: #b45309; }
+
+@media (max-width: 720px) {
+  body { flex-direction: column; }
+  #sidebar {
+    width: 100%;
+    height: 45%;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+    order: 2;
+  }
+  #map { height: 55%; }
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shady Dayz — running routes ranked by shade</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="sidebar">
+  <header>
+    <h1>Shady Dayz</h1>
+    <p class="tagline">Running routes ranked by shade</p>
+  </header>
+  <div class="controls">
+    <label for="distance">Distance (miles)</label>
+    <input type="number" id="distance" value="5" min="1" max="26" step="0.5">
+    <label for="startTime">Start time</label>
+    <input type="datetime-local" id="startTime">
+    <button id="locateBtn" class="secondary">Use my location</button>
+    <p class="hint">…or click the map to set a start point</p>
+    <button id="goBtn" disabled>Find shady routes</button>
+  </div>
+  <div id="status"></div>
+  <div id="sunNote"></div>
+  <div id="results"></div>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/suncalc@1.9.0/suncalc.js"></script>
+<script src="config.js"></script>
+<script src="shade.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
