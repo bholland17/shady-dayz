@@ -1,15 +1,23 @@
-// shade.js — canopy data fetch and shade scoring.
+// shade.js — shade data fetch (trees + buildings) and per-sample shade scoring.
 //
-// Shade model (v1): a route sample point counts as shaded when it sits inside
-// or near mapped tree cover from OpenStreetMap. The sun's altitude at run time
-// stretches how far a tree's shadow reaches (low sun = longer shadows).
-// Building shadows are planned for v2.
+// Shade model (v2): a route sample point counts as shaded when it sits inside
+// or near mapped tree cover, OR when a building stands between it and the sun
+// and is tall enough for its shadow to reach. Sun altitude and azimuth are
+// computed per sample from the runner's estimated position in time, so a long
+// run's shade profile shifts as the sun moves.
 
 const CANOPY_WEIGHTS = {
   wood: 1.0,      // natural=wood, landuse=forest — full canopy
   park: 0.45,     // leisure=park/garden — partial, patchy cover
   treeRow: 0.85,  // natural=tree_row — street tree lines
   tree: 0.7,      // individual mapped trees
+};
+
+const BUILDING = {
+  defaultHeight: 6,   // meters, when OSM has no height/levels tag (~2 stories)
+  metersPerLevel: 3.2,
+  maxShadowReach: 90, // cap probe distance toward the sun
+  fetchAround: 80,    // fetch buildings within this many meters of a route
 };
 
 const M_PER_DEG_LAT = 111320;
@@ -115,10 +123,27 @@ function distToPolylineMeters(pt, line, cutoffM) {
   return best;
 }
 
-// Fetch tree cover from Overpass for a [minLon,minLat,maxLon,maxLat] bbox.
-async function fetchCanopy(bbox) {
+function buildingHeight(tags) {
+  const h = parseFloat(tags.height || tags["building:height"]);
+  if (h > 0) return Math.min(h, 150);
+  const lv = parseFloat(tags["building:levels"]);
+  if (lv > 0) return Math.min(lv * BUILDING.metersPerLevel, 150);
+  return BUILDING.defaultHeight;
+}
+
+// Fetch tree cover (bbox) and buildings (within fetchAround of each route)
+// from Overpass in one query.
+async function fetchShadeData(bbox, candidates) {
   const bb = `${bbox[1]},${bbox[0]},${bbox[3]},${bbox[2]}`; // south,west,north,east
-  const query = `[out:json][timeout:30];
+  const aroundClauses = candidates
+    .map((c) => {
+      const pts = samplePoints(c.coords, 120)
+        .map(([lon, lat]) => `${lat.toFixed(5)},${lon.toFixed(5)}`)
+        .join(",");
+      return `  way["building"](around:${BUILDING.fetchAround},${pts});`;
+    })
+    .join("\n");
+  const query = `[out:json][timeout:60];
 (
   way["natural"~"^(wood|tree_row)$"](${bb});
   relation["natural"="wood"](${bb});
@@ -126,23 +151,32 @@ async function fetchCanopy(bbox) {
   relation["landuse"="forest"](${bb});
   way["leisure"~"^(park|garden)$"](${bb});
   node["natural"="tree"](${bb});
+${aroundClauses}
 );
 out geom;`;
   const res = await fetch(CONFIG.OVERPASS_URL, {
     method: "POST",
     body: "data=" + encodeURIComponent(query),
   });
-  if (!res.ok) throw new Error(`Tree data request failed (${res.status}). Try again in a minute.`);
+  if (!res.ok) throw new Error(`Map data request failed (${res.status}). Try again in a minute.`);
   const json = await res.json();
-  return parseCanopy(json.elements || []);
+  return parseShadeData(json.elements || []);
 }
 
-function parseCanopy(elements) {
-  const canopy = { polygons: [], lines: [], points: [] };
+function parseShadeData(elements) {
+  const data = {
+    polygons: [],
+    lines: [],
+    points: [],
+    buildings: [],
+    grid: new Map(),
+    cellDeg: 0.0008, // ~70-90 m grid cells for the building index
+    maxBuildingHeight: 0,
+  };
 
   const addPolygon = (coords, weight) => {
     if (coords.length < 3) return;
-    canopy.polygons.push({ ring: coords, weight, bbox: bboxOf(coords) });
+    data.polygons.push({ ring: coords, weight, bbox: bboxOf(coords) });
   };
 
   for (const el of elements) {
@@ -151,11 +185,15 @@ function parseCanopy(elements) {
     const isPark = tags.leisure === "park" || tags.leisure === "garden";
 
     if (el.type === "node" && tags.natural === "tree") {
-      canopy.points.push([el.lon, el.lat]);
+      data.points.push([el.lon, el.lat]);
     } else if (el.type === "way" && el.geometry) {
       const coords = el.geometry.map((g) => [g.lon, g.lat]);
-      if (tags.natural === "tree_row") {
-        canopy.lines.push({ line: coords, bbox: bboxOf(coords) });
+      if (tags.building) {
+        const height = buildingHeight(tags);
+        data.buildings.push({ ring: coords, bbox: bboxOf(coords), height });
+        if (height > data.maxBuildingHeight) data.maxBuildingHeight = height;
+      } else if (tags.natural === "tree_row") {
+        data.lines.push({ line: coords, bbox: bboxOf(coords) });
       } else if (isWood) {
         addPolygon(coords, CANOPY_WEIGHTS.wood);
       } else if (isPark) {
@@ -163,7 +201,7 @@ function parseCanopy(elements) {
       }
     } else if (el.type === "relation" && el.members) {
       // Multipolygon woods/forests: treat each outer ring as its own polygon.
-      // Inner holes are ignored in v1 — a small overestimate of cover.
+      // Inner holes are ignored — a small overestimate of cover.
       for (const m of el.members) {
         if (m.role === "outer" && m.geometry) {
           addPolygon(m.geometry.map((g) => [g.lon, g.lat]), CANOPY_WEIGHTS.wood);
@@ -171,30 +209,72 @@ function parseCanopy(elements) {
       }
     }
   }
-  return canopy;
+
+  // Spatial index: every grid cell a building's bbox touches points at it.
+  data.buildings.forEach((b, idx) => {
+    const [minLon, minLat, maxLon, maxLat] = b.bbox;
+    const c = data.cellDeg;
+    for (let i = Math.floor(minLon / c); i <= Math.floor(maxLon / c); i++) {
+      for (let j = Math.floor(minLat / c); j <= Math.floor(maxLat / c); j++) {
+        const key = i + ":" + j;
+        let cell = data.grid.get(key);
+        if (!cell) data.grid.set(key, (cell = []));
+        cell.push(idx);
+      }
+    }
+  });
+  return data;
 }
 
-// Shade value 0..1 for each sample point. sunAltitudeRad stretches the reach of
-// tree/tree-row shadows: reach multiplier 1x (high sun) up to 3x (low sun).
-function scoreSamples(samples, canopy, sunAltitudeRad) {
-  const reach =
-    sunAltitudeRad > 0
-      ? Math.min(3, Math.max(1, 1 / Math.tan(Math.max(sunAltitudeRad, 0.05))))
-      : 1.5;
-  const rowDist = 12 * reach;
-  const treeDist = 9 * reach;
+// Is this point in a building's shadow? Probe from the point toward the sun;
+// a building hit at distance d shades the point if height > d * tan(altitude).
+function inBuildingShadow(pt, sun, data) {
+  if (!data.buildings.length) return false;
+  const tanAlt = Math.tan(sun.altitude);
+  const maxReach = Math.min(BUILDING.maxShadowReach, data.maxBuildingHeight / tanAlt);
+  if (maxReach < 3) return false;
+  const mLon = metersPerDegLon(pt[1]);
+  // SunCalc azimuth: 0 = south, +PI/2 = west. Unit vector toward the sun.
+  const dirE = -Math.sin(sun.azimuth);
+  const dirN = -Math.cos(sun.azimuth);
+  const c = data.cellDeg;
+  for (let d = 4; d <= maxReach; d += 6) {
+    const probe = [pt[0] + (dirE * d) / mLon, pt[1] + (dirN * d) / M_PER_DEG_LAT];
+    const cell = data.grid.get(Math.floor(probe[0] / c) + ":" + Math.floor(probe[1] / c));
+    if (!cell) continue;
+    for (const bi of cell) {
+      const b = data.buildings[bi];
+      if (b.height < d * tanAlt) continue;
+      const bb = b.bbox;
+      if (probe[0] < bb[0] || probe[0] > bb[2] || probe[1] < bb[1] || probe[1] > bb[3]) continue;
+      if (pointInRing(probe, b.ring)) return true;
+    }
+  }
+  return false;
+}
 
-  return samples.map((pt) => {
+// Shade value 0..1 per sample. sunPos[i] is the SunCalc position at the
+// runner's estimated time at that sample. Night samples count as fully shaded.
+function scoreSamples(samples, data, sunPos) {
+  return samples.map((pt, i) => {
+    const sun = sunPos[i];
+    if (sun.altitude <= 0) return 1;
+
+    const reach = Math.min(3, Math.max(1, 1 / Math.tan(Math.max(sun.altitude, 0.05))));
+    const rowDist = 12 * reach;
+    const treeDist = 9 * reach;
+
     let s = 0;
-    for (const poly of canopy.polygons) {
+    for (const poly of data.polygons) {
       if (poly.weight <= s) continue;
       const b = poly.bbox;
       if (pt[0] < b[0] || pt[0] > b[2] || pt[1] < b[1] || pt[1] > b[3]) continue;
       if (pointInRing(pt, poly.ring)) s = Math.max(s, poly.weight);
       if (s >= 1) return s;
     }
+    if (inBuildingShadow(pt, sun, data)) return 1;
     if (s < CANOPY_WEIGHTS.treeRow) {
-      for (const row of canopy.lines) {
+      for (const row of data.lines) {
         const b = bboxExpand(row.bbox, rowDist, pt[1]);
         if (pt[0] < b[0] || pt[0] > b[2] || pt[1] < b[1] || pt[1] > b[3]) continue;
         if (distToPolylineMeters(pt, row.line, rowDist) < rowDist) {
@@ -204,7 +284,7 @@ function scoreSamples(samples, canopy, sunAltitudeRad) {
       }
     }
     if (s < CANOPY_WEIGHTS.tree) {
-      for (const tree of canopy.points) {
+      for (const tree of data.points) {
         if (Math.abs(tree[1] - pt[1]) * M_PER_DEG_LAT > treeDist) continue;
         if (distMeters(tree, pt) < treeDist) {
           s = Math.max(s, CANOPY_WEIGHTS.tree);

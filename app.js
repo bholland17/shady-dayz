@@ -1,4 +1,4 @@
-// app.js — Shady Dayz v1: map UI, route generation, ranking.
+// app.js — Shady Dayz: map UI, route generation, ranking.
 
 const state = {
   start: null, // [lon, lat]
@@ -9,6 +9,7 @@ const state = {
 const els = {
   distance: document.getElementById("distance"),
   startTime: document.getElementById("startTime"),
+  priority: document.getElementById("priority"),
   locateBtn: document.getElementById("locateBtn"),
   goBtn: document.getElementById("goBtn"),
   status: document.getElementById("status"),
@@ -61,6 +62,12 @@ els.locateBtn.addEventListener("click", () => {
 });
 
 els.goBtn.addEventListener("click", generate);
+
+els.priority.addEventListener("change", () => {
+  if (!state.routes.length) return;
+  rankRoutes();
+  renderResults();
+});
 
 async function fetchRoundTrip(start, meters, seed) {
   const res = await fetch(CONFIG.ORS_URL, {
@@ -128,12 +135,32 @@ function bboxOfRoutes(candidates) {
   return bboxExpand(b, 150, (b[1] + b[3]) / 2);
 }
 
+// Weighted shade score for the chosen priority: "early" weights the first
+// miles most, "late" the last, "total" weights everything equally.
+function rankScoreFor(route, mode) {
+  const v = route.shadeVals;
+  const n = v.length;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    const w = mode === "early" ? n - i : mode === "late" ? i + 1 : 1;
+    num += v[i] * w;
+    den += w;
+  }
+  return (num / den) * 100 - 25 * (route.overlapPct / 100);
+}
+
+function rankRoutes() {
+  const mode = els.priority.value;
+  for (const r of state.routes) r.rankScore = rankScoreFor(r, mode);
+  state.routes.sort((a, b) => b.rankScore - a.rankScore);
+}
+
 async function generate() {
   const miles = parseFloat(els.distance.value);
   if (!state.start || !miles) return;
   const meters = miles * 1609.34;
   const startAt = els.startTime.value ? new Date(els.startTime.value) : new Date();
-  const midRun = new Date(startAt.getTime() + (miles * CONFIG.PACE_MIN_PER_MILE * 60000) / 2);
+  const speedMps = 1609.34 / (CONFIG.PACE_MIN_PER_MILE * 60);
 
   els.goBtn.disabled = true;
   routeLayer.clearLayers();
@@ -149,19 +176,24 @@ async function generate() {
       throw new Error("No routes found here — try a different start point or distance.");
     }
 
-    setStatus(`Found ${candidates.length} loops. Fetching tree cover…`);
-    const canopy = await fetchCanopy(bboxOfRoutes(candidates));
+    setStatus(`Found ${candidates.length} loops. Fetching trees and buildings…`);
+    const shadeData = await fetchShadeData(bboxOfRoutes(candidates), candidates);
 
     setStatus("Scoring shade…");
-    const sun = SunCalc.getPosition(midRun, state.start[1], state.start[0]);
-    if (sun.altitude <= 0) {
+    const midRun = new Date(startAt.getTime() + (miles * CONFIG.PACE_MIN_PER_MILE * 60000) / 2);
+    const midSun = SunCalc.getPosition(midRun, state.start[1], state.start[0]);
+    if (midSun.altitude <= 0) {
       els.sunNote.textContent =
-        "The sun is down at that start time — every route will be in the dark. Scores below show daytime tree cover.";
+        "The sun is down for most of that run — dark stretches count as fully shaded.";
     }
 
     state.routes = candidates.map((c, i) => {
       const samples = samplePoints(c.coords, CONFIG.SAMPLE_STEP_M);
-      const shadeVals = scoreSamples(samples, canopy, sun.altitude);
+      const sunPos = samples.map((pt, si) => {
+        const t = new Date(startAt.getTime() + ((si * CONFIG.SAMPLE_STEP_M) / speedMps) * 1000);
+        return SunCalc.getPosition(t, pt[1], pt[0]);
+      });
+      const shadeVals = scoreSamples(samples, shadeData, sunPos);
       const shadePct = (shadeVals.reduce((a, v) => a + v, 0) / shadeVals.length) * 100;
       const overlap = overlapFraction(samples);
       return {
@@ -172,10 +204,10 @@ async function generate() {
         shadeVals,
         shadePct,
         overlapPct: overlap * 100,
-        rankScore: shadePct - 25 * overlap,
+        rankScore: 0,
       };
     });
-    state.routes.sort((a, b) => b.rankScore - a.rankScore);
+    rankRoutes();
 
     renderResults();
     setStatus("");
@@ -192,6 +224,19 @@ const SHADE_HIGH = [43, 138, 62]; // shady green
 function shadeColor(v) {
   const c = SHADE_LOW.map((lo, i) => Math.round(lo + (SHADE_HIGH[i] - lo) * v));
   return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+// Average shadeVals into nBuckets values for the profile strip.
+function bucketize(vals, nBuckets) {
+  const out = [];
+  for (let b = 0; b < nBuckets; b++) {
+    const lo = Math.floor((b * vals.length) / nBuckets);
+    const hi = Math.max(lo + 1, Math.floor(((b + 1) * vals.length) / nBuckets));
+    let sum = 0;
+    for (let i = lo; i < hi; i++) sum += vals[i];
+    out.push(sum / (hi - lo));
+  }
+  return out;
 }
 
 function renderResults() {
@@ -224,19 +269,26 @@ function renderResults() {
     const rb = L.latLngBounds(latlngs);
     bounds = bounds ? bounds.extend(rb) : rb;
 
-    const card = document.createElement("div");
-    card.className = "card" + (route.id === state.selectedId ? " selected" : "");
+    const runMin = route.miles * CONFIG.PACE_MIN_PER_MILE;
+    const sunMin = Math.round((1 - route.shadePct / 100) * runMin);
+    const strip = bucketize(route.shadeVals, 60)
+      .map((v) => `<span style="background:${shadeColor(v)}"></span>`)
+      .join("");
     const overlapNote =
       route.overlapPct > 25
-        ? `<span class="warn">repeats ${route.overlapPct.toFixed(0)}% of its path</span>`
+        ? ` · <span class="warn">repeats ${route.overlapPct.toFixed(0)}% of its path</span>`
         : "";
+
+    const card = document.createElement("div");
+    card.className = "card" + (route.id === state.selectedId ? " selected" : "");
     card.innerHTML = `
       <div class="card-top">
         <span class="route-name">Route ${letters[rank]}</span>
         <span class="shade-pct">${route.shadePct.toFixed(0)}% shade</span>
       </div>
-      <div class="shadebar"><div style="width:${route.shadePct.toFixed(0)}%"></div></div>
-      <div class="card-meta">${route.miles.toFixed(1)} mi ${overlapNote}</div>`;
+      <div class="profile">${strip}</div>
+      <div class="profile-caption"><span>start</span><span>finish</span></div>
+      <div class="card-meta">${route.miles.toFixed(1)} mi · ≈${sunMin} min in direct sun${overlapNote}</div>`;
     card.addEventListener("click", () => selectRoute(route.id));
     els.results.appendChild(card);
   });

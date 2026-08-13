@@ -31,7 +31,8 @@ h1 { font-size: 24px; margin: 0; }
   margin: 12px 0 4px;
 }
 
-.controls input {
+.controls input,
+.controls select {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid #d1d5db;
@@ -89,14 +90,22 @@ button.secondary {
 .route-name { font-weight: 500; }
 .shade-pct { color: #2b8a3e; font-weight: 500; font-size: 14px; }
 
-.shadebar {
-  height: 6px;
-  border-radius: 3px;
-  background: #f4e8d0;
+.profile {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
-.shadebar > div { height: 100%; background: #2b8a3e; }
+.profile span { flex: 1; }
+
+.profile-caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
 
 .card-meta { margin-top: 6px; font-size: 13px; color: #6b7280; }
 .card-meta .warn { color: #b45309; }
