@@ -16,6 +16,7 @@ const els = {
   status: document.getElementById("status"),
   sunNote: document.getElementById("sunNote"),
   results: document.getElementById("results"),
+  suggest: document.getElementById("suggest"),
 };
 
 const map = L.map("map").setView([39.5, -98.35], 4);
@@ -166,19 +167,36 @@ async function generate() {
   els.goBtn.disabled = true;
   routeLayer.clearLayers();
   els.results.innerHTML = "";
+  els.suggest.innerHTML = "";
   els.sunNote.textContent = "";
   state.routes = [];
   state.selectedId = null;
 
   try {
-    setStatus("Generating loop routes…");
-    const candidates = await fetchCandidates(state.start, meters);
+    let candidates, canopyEls;
+    if (meters <= CONFIG.PARALLEL_CANOPY_MAX_M) {
+      // A round trip can't stray farther than half its length from the start,
+      // so tree cover for that circle can download while routes generate.
+      setStatus("Generating loops and fetching tree cover…");
+      const pt = state.start;
+      const canopyBbox = bboxExpand([pt[0], pt[1], pt[0], pt[1]], meters * 0.5 + 150, pt[1]);
+      [candidates, canopyEls] = await Promise.all([
+        fetchCandidates(state.start, meters),
+        fetchCanopyElements(canopyBbox),
+      ]);
+    } else {
+      setStatus("Generating loop routes…");
+      candidates = await fetchCandidates(state.start, meters);
+      setStatus("Fetching tree cover…");
+      canopyEls = await fetchCanopyElements(bboxOfRoutes(candidates));
+    }
     if (!candidates.length) {
       throw new Error("No routes found here — try a different start point or distance.");
     }
 
-    setStatus(`Found ${candidates.length} loops. Fetching trees and buildings…`);
-    const shadeData = await fetchShadeData(bboxOfRoutes(candidates), candidates);
+    setStatus(`Found ${candidates.length} loops. Fetching buildings…`);
+    const buildingEls = await fetchBuildingElements(candidates);
+    const shadeData = parseShadeData(canopyEls.concat(buildingEls));
 
     setStatus("Scoring shade…");
     const endRun = new Date(startAt.getTime() + miles * CONFIG.PACE_MIN_PER_MILE * 60000);
@@ -219,10 +237,50 @@ async function generate() {
 
     renderResults();
     setStatus("");
+    if (state.routes[0].shadePct < CONFIG.SUGGEST_THRESHOLD) suggestShadySpots();
   } catch (err) {
     setStatus(err.message, true);
   } finally {
     els.goBtn.disabled = false;
+  }
+}
+
+// When local routes score poorly, offer big named woods/parks a short drive
+// away as alternate start points. Clicking one re-runs the search from there.
+async function suggestShadySpots() {
+  const origin = state.start;
+  els.suggest.textContent = "Not much shade around here — looking for shadier spots a short drive away…";
+  try {
+    const spots = (await fetchShadySpots(origin, CONFIG.SUGGEST_RADIUS_M))
+      .filter((s) => s.distM > 1000)
+      .slice(0, 4);
+    els.suggest.innerHTML = "";
+    if (!spots.length || origin !== state.start) return;
+
+    const head = document.createElement("p");
+    head.className = "suggest-head";
+    head.textContent = "Not much shade around here — these bigger woods and parks are a short drive away. Click one to search from there:";
+    els.suggest.appendChild(head);
+
+    for (const s of spots) {
+      const div = document.createElement("div");
+      div.className = "spot";
+      const name = document.createElement("span");
+      name.className = "spot-name";
+      name.textContent = s.name;
+      const meta = document.createElement("span");
+      meta.className = "spot-meta";
+      meta.textContent = `${s.type} · ${(s.distM / 1609.34).toFixed(1)} mi ${compassDir(origin, s.lonlat)}`;
+      div.append(name, meta);
+      div.addEventListener("click", () => {
+        setStart(s.lonlat);
+        generate();
+      });
+      els.suggest.appendChild(div);
+    }
+  } catch {
+    els.suggest.textContent =
+      "Shade is thin here — couldn't check for shadier spots nearby right now, try again in a minute.";
   }
 }
 

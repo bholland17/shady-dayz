@@ -17,7 +17,7 @@ const BUILDING = {
   defaultHeight: 6,   // meters, when OSM has no height/levels tag (~2 stories)
   metersPerLevel: 3.2,
   maxShadowReach: 90, // cap probe distance toward the sun
-  fetchAround: 80,    // fetch buildings within this many meters of a route
+  fetchAround: 70,    // fetch buildings within this many meters of a route
 };
 
 const M_PER_DEG_LAT = 111320;
@@ -131,19 +131,37 @@ function buildingHeight(tags) {
   return BUILDING.defaultHeight;
 }
 
-// Fetch tree cover (bbox) and buildings (within fetchAround of each route)
-// from Overpass in one query.
-async function fetchShadeData(bbox, candidates) {
+// The public Overpass server allows ~2 concurrent slots per IP, so a burst of
+// queries can bounce with 429 — one polite retry covers that.
+async function overpassElements(query, attempt = 0) {
+  let res;
+  try {
+    res = await fetch(CONFIG.OVERPASS_URL, {
+      method: "POST",
+      body: "data=" + encodeURIComponent(query),
+    });
+  } catch (err) {
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 3000));
+      return overpassElements(query, attempt + 1);
+    }
+    throw err;
+  }
+  if (!res.ok) {
+    if (attempt < 2 && (res.status === 429 || res.status === 504)) {
+      await new Promise((r) => setTimeout(r, 3000));
+      return overpassElements(query, attempt + 1);
+    }
+    throw new Error(`Map data request failed (${res.status}). Try again in a minute.`);
+  }
+  return (await res.json()).elements || [];
+}
+
+// Tree cover for a [minLon,minLat,maxLon,maxLat] bbox. Independent of the
+// generated routes, so it can run in parallel with route generation.
+function fetchCanopyElements(bbox) {
   const bb = `${bbox[1]},${bbox[0]},${bbox[3]},${bbox[2]}`; // south,west,north,east
-  const aroundClauses = candidates
-    .map((c) => {
-      const pts = samplePoints(c.coords, 120)
-        .map(([lon, lat]) => `${lat.toFixed(5)},${lon.toFixed(5)}`)
-        .join(",");
-      return `  way["building"](around:${BUILDING.fetchAround},${pts});`;
-    })
-    .join("\n");
-  const query = `[out:json][timeout:60];
+  return overpassElements(`[out:json][timeout:40];
 (
   way["natural"~"^(wood|tree_row)$"](${bb});
   relation["natural"="wood"](${bb});
@@ -151,16 +169,65 @@ async function fetchShadeData(bbox, candidates) {
   relation["landuse"="forest"](${bb});
   way["leisure"~"^(park|garden)$"](${bb});
   node["natural"="tree"](${bb});
-${aroundClauses}
 );
-out geom;`;
-  const res = await fetch(CONFIG.OVERPASS_URL, {
-    method: "POST",
-    body: "data=" + encodeURIComponent(query),
-  });
-  if (!res.ok) throw new Error(`Map data request failed (${res.status}). Try again in a minute.`);
-  const json = await res.json();
-  return parseShadeData(json.elements || []);
+out geom;`);
+}
+
+// Buildings in the routes' bounding box. A plain bbox query hits Overpass's
+// spatial index and returns in seconds where around-polyline filters take
+// minutes; tiny sheds/garages are dropped client-side in parseShadeData.
+function fetchBuildingElements(candidates) {
+  let b = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const c of candidates) {
+    const cb = bboxOf(c.coords);
+    b = [Math.min(b[0], cb[0]), Math.min(b[1], cb[1]), Math.max(b[2], cb[2]), Math.max(b[3], cb[3])];
+  }
+  b = bboxExpand(b, BUILDING.fetchAround, (b[1] + b[3]) / 2);
+  return overpassElements(`[out:json][timeout:40];
+way["building"](${b[1]},${b[0]},${b[3]},${b[2]});
+out geom;`);
+}
+
+// Large named woods/forests/parks within radiusM of start — candidates for a
+// shadier drive-to start point. The length() filter keeps only features with
+// a substantial perimeter, so pocket parks don't make the list.
+async function fetchShadySpots(start, radiusM) {
+  const around = `around:${radiusM},${start[1].toFixed(5)},${start[0].toFixed(5)}`;
+  const els = await overpassElements(`[out:json][timeout:25];
+(
+  way["natural"="wood"]["name"](${around})(if: length() > 1200);
+  way["landuse"="forest"]["name"](${around})(if: length() > 1200);
+  way["leisure"="park"]["name"](${around})(if: length() > 1200);
+  relation["natural"="wood"]["name"](${around})(if: length() > 1500);
+  relation["landuse"="forest"]["name"](${around})(if: length() > 1500);
+  relation["leisure"="park"]["name"](${around})(if: length() > 1500);
+);
+out tags center;`);
+  const seen = new Set();
+  const spots = [];
+  for (const el of els) {
+    const c = el.center || (el.lat != null ? { lat: el.lat, lon: el.lon } : null);
+    if (!c || !el.tags || !el.tags.name || seen.has(el.tags.name)) continue;
+    seen.add(el.tags.name);
+    const isWood = el.tags.natural === "wood" || el.tags.landuse === "forest";
+    const lonlat = [c.lon, c.lat];
+    spots.push({
+      name: el.tags.name,
+      type: isWood ? "woods" : "park",
+      lonlat,
+      distM: distMeters(start, lonlat),
+    });
+  }
+  spots.sort((a, b) => (a.type === b.type ? a.distM - b.distM : a.type === "woods" ? -1 : 1));
+  return spots;
+}
+
+function compassDir(from, to) {
+  const dx = (to[0] - from[0]) * metersPerDegLon(from[1]);
+  const dy = (to[1] - from[1]) * M_PER_DEG_LAT;
+  const dirs = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"];
+  const a = Math.atan2(dy, dx);
+  return dirs[Math.round(((a + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) % 8];
 }
 
 function parseShadeData(elements) {
@@ -189,8 +256,12 @@ function parseShadeData(elements) {
     } else if (el.type === "way" && el.geometry) {
       const coords = el.geometry.map((g) => [g.lon, g.lat]);
       if (tags.building) {
+        const bb = bboxOf(coords);
+        // Skip sheds/garages: footprint under ~12x12 m never shades a road.
+        const lat = (bb[1] + bb[3]) / 2;
+        if ((bb[2] - bb[0]) * metersPerDegLon(lat) < 12 && (bb[3] - bb[1]) * M_PER_DEG_LAT < 12) continue;
         const height = buildingHeight(tags);
-        data.buildings.push({ ring: coords, bbox: bboxOf(coords), height });
+        data.buildings.push({ ring: coords, bbox: bb, height });
         if (height > data.maxBuildingHeight) data.maxBuildingHeight = height;
       } else if (tags.natural === "tree_row") {
         data.lines.push({ line: coords, bbox: bboxOf(coords) });

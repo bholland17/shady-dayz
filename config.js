@@ -9,4 +9,7 @@ const CONFIG = {
   SEEDS: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
   SAMPLE_STEP_M: 40,        // route sampling interval for shade scoring
   PACE_MIN_PER_MILE: 10,    // used to estimate mid-run time for sun position
+  SUGGEST_THRESHOLD: 35,    // if the best route's shade % is below this, suggest drive-to spots
+  SUGGEST_RADIUS_M: 8000,   // how far to look for shadier start points (~5 mi)
+  PARALLEL_CANOPY_MAX_M: 13000, // above this run length, fetch canopy after routes (bbox too big)
 };
