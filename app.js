@@ -10,6 +10,7 @@ const els = {
   distance: document.getElementById("distance"),
   startTime: document.getElementById("startTime"),
   priority: document.getElementById("priority"),
+  legend: document.getElementById("legend"),
   locateBtn: document.getElementById("locateBtn"),
   goBtn: document.getElementById("goBtn"),
   status: document.getElementById("status"),
@@ -180,11 +181,18 @@ async function generate() {
     const shadeData = await fetchShadeData(bboxOfRoutes(candidates), candidates);
 
     setStatus("Scoring shade…");
-    const midRun = new Date(startAt.getTime() + (miles * CONFIG.PACE_MIN_PER_MILE * 60000) / 2);
-    const midSun = SunCalc.getPosition(midRun, state.start[1], state.start[0]);
-    if (midSun.altitude <= 0) {
+    const endRun = new Date(startAt.getTime() + miles * CONFIG.PACE_MIN_PER_MILE * 60000);
+    const altStart = SunCalc.getPosition(startAt, state.start[1], state.start[0]).altitude;
+    const altEnd = SunCalc.getPosition(endRun, state.start[1], state.start[0]).altitude;
+    if (altStart <= 0 && altEnd <= 0) {
       els.sunNote.textContent =
-        "The sun is down for most of that run — dark stretches count as fully shaded.";
+        "The sun is down for this entire run — everything counts as full shade.";
+    } else if (altStart > 0 && altEnd <= 0) {
+      els.sunNote.textContent =
+        "The sun sets during this run — the final stretch counts as full shade.";
+    } else if (altStart <= 0 && altEnd > 0) {
+      els.sunNote.textContent =
+        "The sun rises during this run — the opening stretch counts as full shade.";
     }
 
     state.routes = candidates.map((c, i) => {
@@ -218,8 +226,8 @@ async function generate() {
   }
 }
 
-const SHADE_LOW = [232, 89, 12]; // sunny orange
-const SHADE_HIGH = [43, 138, 62]; // shady green
+const SHADE_LOW = [245, 158, 11]; // full sun — warm amber
+const SHADE_HIGH = [61, 75, 102]; // full shade — cool slate (shadow), distinct from grey route lines
 
 function shadeColor(v) {
   const c = SHADE_LOW.map((lo, i) => Math.round(lo + (SHADE_HIGH[i] - lo) * v));
@@ -242,6 +250,7 @@ function bucketize(vals, nBuckets) {
 function renderResults() {
   routeLayer.clearLayers();
   els.results.innerHTML = "";
+  els.legend.hidden = !state.routes.length;
 
   const letters = "ABCDEFGHIJ";
   let bounds = null;

@@ -88,7 +88,23 @@ button.secondary {
 }
 
 .route-name { font-weight: 500; }
-.shade-pct { color: #2b8a3e; font-weight: 500; font-size: 14px; }
+.shade-pct { color: #3d4b66; font-weight: 500; font-size: 14px; }
+
+#legend { margin-top: 16px; }
+
+.legend-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgb(245,158,11), rgb(61,75,102));
+}
+
+.legend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
 
 .profile {
   display: flex;
