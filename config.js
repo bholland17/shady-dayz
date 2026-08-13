@@ -11,5 +11,8 @@ const CONFIG = {
   PACE_MIN_PER_MILE: 10,    // used to estimate mid-run time for sun position
   SUGGEST_THRESHOLD: 35,    // if the best route's shade % is below this, suggest drive-to spots
   SUGGEST_RADIUS_M: 8000,   // how far to look for shadier start points (~5 mi)
+  SUGGEST_MAX_CANDIDATES: 6, // spots to pre-score before picking winners
+  SUGGEST_MARGIN: 12,       // a spot must beat the best route's shade % by this much
+  SUGGEST_EST_RADIUS_M: 500, // radius of the sampling grid used to estimate a spot's shade
   PARALLEL_CANOPY_MAX_M: 13000, // above this run length, fetch canopy after routes (bbox too big)
 };

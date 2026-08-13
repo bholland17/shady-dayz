@@ -245,24 +245,50 @@ async function generate() {
   }
 }
 
-// When local routes score poorly, offer big named woods/parks a short drive
-// away as alternate start points. Clicking one re-runs the search from there.
+// When local routes score poorly, find big named woods/parks a short drive
+// away, estimate the shade around each one, and offer only the spots that
+// meaningfully beat the best local route. Clicking one re-runs the search.
 async function suggestShadySpots() {
   const origin = state.start;
-  els.suggest.textContent = "Not much shade around here — looking for shadier spots a short drive away…";
+  const bestPct = state.routes[0].shadePct;
+  els.suggest.textContent =
+    "Not much shade around here — checking whether nearby parks and woods would do better…";
   try {
-    const spots = (await fetchShadySpots(origin, CONFIG.SUGGEST_RADIUS_M))
+    const candidates = (await fetchShadySpots(origin, CONFIG.SUGGEST_RADIUS_M))
       .filter((s) => s.distM > 1000)
+      .slice(0, CONFIG.SUGGEST_MAX_CANDIDATES);
+    if (!candidates.length || origin !== state.start) {
+      els.suggest.innerHTML = "";
+      return;
+    }
+
+    const spotEls = await fetchSpotCanopyElements(candidates, CONFIG.SUGGEST_EST_RADIUS_M + 100);
+    const spotData = parseShadeData(spotEls);
+    const miles = parseFloat(els.distance.value) || 5;
+    const startAt = els.startTime.value ? new Date(els.startTime.value) : new Date();
+    const midRun = new Date(startAt.getTime() + (miles * CONFIG.PACE_MIN_PER_MILE * 60000) / 2);
+    for (const s of candidates) {
+      s.estPct = estimateSpotShade(s, spotData, midRun, CONFIG.SUGGEST_EST_RADIUS_M);
+    }
+
+    const winners = candidates
+      .filter((s) => s.estPct >= bestPct + CONFIG.SUGGEST_MARGIN)
+      .sort((a, b) => b.estPct - a.estPct)
       .slice(0, 4);
     els.suggest.innerHTML = "";
-    if (!spots.length || origin !== state.start) return;
+    if (origin !== state.start) return;
+    if (!winners.length) {
+      els.suggest.textContent =
+        "Shade is thin here, and no park or woods within a short drive looks meaningfully shadier at that time. Running earlier or later may help more than driving.";
+      return;
+    }
 
     const head = document.createElement("p");
     head.className = "suggest-head";
-    head.textContent = "Not much shade around here — these bigger woods and parks are a short drive away. Click one to search from there:";
+    head.textContent = `Not much shade around here — these spots look meaningfully shadier than your best route (${bestPct.toFixed(0)}%). Click one to search from there:`;
     els.suggest.appendChild(head);
 
-    for (const s of spots) {
+    for (const s of winners) {
       const div = document.createElement("div");
       div.className = "spot";
       const name = document.createElement("span");
@@ -270,7 +296,7 @@ async function suggestShadySpots() {
       name.textContent = s.name;
       const meta = document.createElement("span");
       meta.className = "spot-meta";
-      meta.textContent = `${s.type} · ${(s.distM / 1609.34).toFixed(1)} mi ${compassDir(origin, s.lonlat)}`;
+      meta.textContent = `est. ~${s.estPct.toFixed(0)}% shade · ${(s.distM / 1609.34).toFixed(1)} mi ${compassDir(origin, s.lonlat)}`;
       div.append(name, meta);
       div.addEventListener("click", () => {
         setStart(s.lonlat);

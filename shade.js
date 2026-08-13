@@ -222,6 +222,51 @@ out tags center;`);
   return spots;
 }
 
+// Tree cover in a small box around each candidate spot, fetched as one query.
+function fetchSpotCanopyElements(spots, radiusM) {
+  const clauses = spots
+    .map((s) => {
+      const p = s.lonlat;
+      const b = bboxExpand([p[0], p[1], p[0], p[1]], radiusM, p[1]);
+      const bb = `${b[1]},${b[0]},${b[3]},${b[2]}`;
+      return `  way["natural"~"^(wood|tree_row)$"](${bb});
+  relation["natural"="wood"](${bb});
+  way["landuse"="forest"](${bb});
+  relation["landuse"="forest"](${bb});
+  way["leisure"~"^(park|garden)$"](${bb});
+  node["natural"="tree"](${bb});`;
+    })
+    .join("\n");
+  return overpassElements(`[out:json][timeout:30];
+(
+${clauses}
+);
+out geom;`);
+}
+
+function gridAround(lonlat, radiusM, stepM) {
+  const pts = [];
+  const mLon = metersPerDegLon(lonlat[1]);
+  for (let dy = -radiusM; dy <= radiusM; dy += stepM) {
+    for (let dx = -radiusM; dx <= radiusM; dx += stepM) {
+      if (dx * dx + dy * dy <= radiusM * radiusM) {
+        pts.push([lonlat[0] + dx / mLon, lonlat[1] + dy / M_PER_DEG_LAT]);
+      }
+    }
+  }
+  return pts;
+}
+
+// Estimated shade % of the area around a spot: a sampling grid scored against
+// tree cover only. Buildings are ignored — the point of driving out is trees,
+// and it keeps the query light — so the estimate runs conservative.
+function estimateSpotShade(spot, data, when, radiusM) {
+  const pts = gridAround(spot.lonlat, radiusM, 75);
+  const sun = SunCalc.getPosition(when, spot.lonlat[1], spot.lonlat[0]);
+  const vals = scoreSamples(pts, data, pts.map(() => sun));
+  return (vals.reduce((a, v) => a + v, 0) / vals.length) * 100;
+}
+
 function compassDir(from, to) {
   const dx = (to[0] - from[0]) * metersPerDegLon(from[1]);
   const dy = (to[1] - from[1]) * M_PER_DEG_LAT;
