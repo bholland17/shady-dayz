@@ -62,6 +62,33 @@ button.secondary {
   border: 1px solid #d1d5db;
 }
 
+.addr-row { display: flex; gap: 8px; align-items: stretch; }
+.addr-row input { flex: 1; }
+.addr-row button.slim { width: auto; margin-top: 0; padding: 8px 16px; }
+
+.checks { margin-top: 12px; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  margin: 6px 0;
+  cursor: pointer;
+}
+
+.check input { width: auto; accent-color: #2b8a3e; }
+
+.gpx-label {
+  display: block;
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#gpxFile { margin-top: 6px; font-size: 13px; width: 100%; }
+
 .hint { font-size: 12px; color: #9ca3af; margin: 6px 0 0; text-align: center; }
 
 #status { margin-top: 14px; font-size: 14px; color: #374151; min-height: 1em; }
@@ -125,6 +152,38 @@ button.secondary {
 
 .card-meta { margin-top: 6px; font-size: 13px; color: #6b7280; }
 .card-meta .warn { color: #b45309; }
+
+.detail {
+  margin-top: 10px;
+  border-top: 1px solid #eee;
+  padding-top: 10px;
+  font-size: 13px;
+}
+
+.mile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.mile-label { width: 38px; color: #6b7280; }
+.mile-pct { width: 36px; text-align: right; color: #374151; }
+
+.mile-bar {
+  flex: 1;
+  height: 8px;
+  background: #f1efe8;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mile-bar > div { height: 100%; }
+
+.detail-note { margin: 10px 0 4px; color: #374151; }
+
+.tips { margin: 4px 0 0; padding-left: 18px; color: #374151; }
+.tips li { margin: 3px 0; }
 
 #suggest { margin-top: 14px; font-size: 13px; color: #374151; }
 .suggest-head { margin: 0 0 8px; }

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shady Dayz — running routes ranked by shade</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <div id="sidebar">
@@ -14,6 +14,13 @@
     <p class="tagline">Running routes ranked by shade</p>
   </header>
   <div class="controls">
+    <label for="address">Start address or zip</label>
+    <div class="addr-row">
+      <input type="text" id="address" placeholder="e.g. 30309 or 123 Main St, Atlanta">
+      <button id="addrBtn" class="secondary slim">Set</button>
+    </div>
+    <button id="locateBtn" class="secondary">Use my location</button>
+    <p class="hint">…or click the map to set a start point</p>
     <label for="distance">Distance (miles)</label>
     <input type="number" id="distance" value="5" min="1" max="26" step="0.5">
     <label for="startTime">Start time</label>
@@ -24,9 +31,14 @@
       <option value="early">Shade early in the run</option>
       <option value="late">Shade late in the run</option>
     </select>
-    <button id="locateBtn" class="secondary">Use my location</button>
-    <p class="hint">…or click the map to set a start point</p>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="optQuiet"> Avoid busy roads</label>
+      <label class="check"><input type="checkbox" id="optGreen"> Prefer parks &amp; greenways</label>
+      <label class="check"><input type="checkbox" id="optSteps"> Avoid stairs</label>
+    </div>
     <button id="goBtn" disabled>Find shady routes</button>
+    <label for="gpxFile" class="gpx-label">Racing? Upload the course GPX to score its shade</label>
+    <input type="file" id="gpxFile" accept=".gpx">
   </div>
   <div id="status"></div>
   <div id="sunNote"></div>
@@ -40,8 +52,8 @@
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/suncalc@1.9.0/suncalc.js"></script>
-<script src="config.js?v=8"></script>
-<script src="shade.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="config.js?v=10"></script>
+<script src="shade.js?v=10"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

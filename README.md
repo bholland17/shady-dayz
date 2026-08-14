@@ -6,7 +6,14 @@ A web app that finds running loops near you and ranks them by how shady they'll 
 
 1. **Route generation** — [OpenRouteService](https://openrouteservice.org) round-trip routing generates ~10 realistic loop candidates on real streets and paths for your target distance. Loops by construction: no running around the block twenty times.
 2. **Shade scoring** — [SunCalc](https://github.com/mourner/suncalc) computes the sun's altitude and azimuth at each point of the run (based on a 10 min/mile pace, so the sun moves as you do). Tree cover (woods, forests, parks, tree rows, individual trees) and building footprints with heights come from OpenStreetMap via the Overpass API. Each route is sampled every 40 m; a sample is shaded if it passes through/near canopy or if a building between it and the sun is tall enough for its shadow to reach. Low sun stretches shadow reach. Routes that double back on themselves get penalized.
-3. **Ranking** — sort by total shade, shade early in the run, or shade late in the run. Every route card shows a start-to-finish shade profile strip, and selecting a route paints its shady (green) vs. sunny (orange) stretches on the map.
+3. **Ranking** — sort by total shade, shade early in the run, or shade late in the run. Every route card shows a start-to-finish shade profile strip, and selecting a route zooms the map to it, paints its sunny (amber) vs. shady (slate) stretches, and opens a detail view: per-mile shade, your longest sunny stretch, and computed improvements (the same loop re-scored in reverse and at ±1 hour).
+
+Other features:
+
+- **Start anywhere** — geolocation, a click on the map, or an address/zip (via Nominatim).
+- **Route preferences** — avoid busy roads, prefer parks & greenways, avoid stairs (OpenRouteService walking-profile options).
+- **Race courses** — upload a course GPX (most races publish one, and Strava/MapMyRun export them) to score its shade at your start time.
+- **Drive-to suggestions** — when local routes score poorly, nearby large woods/parks are pre-scored and suggested only if they'd meaningfully beat your best route.
 
 ## Running locally
 
